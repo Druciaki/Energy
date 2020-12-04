@@ -8,10 +8,10 @@ def writetsv(name, data):
         for d,l in zip(dates,loads):
             tsv_writer.writerow([d, l])
 
-def writetsvdic(datas, nlines):
-    with open("output/resultado.tsv", 'wt') as out_file:
+def writetsvdic(datas, nlines, outputfile="output/resultado.tsv"):
+    with open(outputfile, 'wt') as out_file:
         # write header
-        header = ["Data"]
+        header = []
         for key in datas:
             header.append(key)
         tsv_writer = csv.DictWriter(out_file, delimiter='\t', fieldnames=header)
@@ -20,6 +20,5 @@ def writetsvdic(datas, nlines):
         for i in range(0, nlines):
             tsvlinedic = {}
             for dk in datas.keys():
-                tsvlinedic[dk] = datas[dk][1][i]
-                tsvlinedic["Data"] = datas[dk][0][i]
+                tsvlinedic[dk] = datas[dk][i]
             tsv_writer.writerow(tsvlinedic)

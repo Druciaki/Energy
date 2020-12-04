@@ -5,21 +5,20 @@
 #
  
 import os, sys
-from sklearn.datasets.base import Bunch
 import numpy as np
 import pdb;
 
 class energy_file:
     efile = None
-    lines_count = 0
-    columns_count = 0
-    filters = []
-    date_column_index = 0 # Always expect date to be on the first column
-    data_indexes = [] # relevant data to be analized (after filter is applied)
-    data = []
 
     def __init__(self, name=''):
         self.efile = open(name)
+        self.data_indexes = []
+        self.date_column_index = 0 # Always expect date to be on the first column
+        self.filters = []
+        self.lines_count = 0
+        self.data_indexes = [] # relevant data to be analized (after filter is applied)
+        self.data = []
 
     def normalize_value(self, value):
         ''' remove dots and use ',' as '.'
@@ -56,9 +55,12 @@ class energy_file:
 
         dates = []
         values = []
+
         for info in lins:
             info = info.split('\t')
             value = 0.0
+            if len(info) <= 1:
+                continue
             for x in self.data_indexes:
                 value += self.normalize_value(info[x])
 

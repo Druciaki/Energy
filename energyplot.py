@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from decimal import *
 
-def buildgraphic(guesses):
+def buildgraphic(guesses,outputfile="output/CargaEletrica.png"):
     plt.clf()
     for name in guesses:
         data = guesses[name]
@@ -25,6 +25,6 @@ def buildgraphic(guesses):
     plt.ylabel('Carga')
     plt.title('Previsao via Regressao Linear')
     plt.legend()
-    plt.savefig("output/CargaEletrica.png") 
+    plt.savefig(outputfile) 
     #plt.show()
 

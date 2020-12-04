@@ -14,25 +14,39 @@ import energyplot as ep
 import numpy as np
 import statistics
 import matplotlib.pyplot as plt
+from scipy.optimize import least_squares
+from scipy.optimize import curve_fit
+import scipy
+
 from decimal import *
+import pdb
 
 plt.autumn()
 
-import pdb
-
 JANELAS = [6,12]
+PREVISAO_ANO = 2
 
+#2013 - 2018
 parser = rt.energy_file('example/Carga de Demanda_SIN_03-18.xlsx - Demanda.tsv')
 parser.readLines(["NE","N"])
 tudo = parser.get_numpy_data()
 
-v = tudo['values'] # Electric Load Value
-t = tudo['dates']  # Time YYYYMMDD
+#2019 - out 2020
+read = rt.energy_file('example/1920.load.tsv')
+read.readLines(["NE","N"])
+tudo2 = read.get_numpy_data()
+
+def mape(y_true, y_pred): 
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+def readable_date(date): # Receive YYYYMMDD and return readable date
+    sdate = str(date)
+    return sdate[6:8]+"/"+sdate[4:6]+"/"+sdate[0:4]
 
 def get_numpy_year_month_array(first_year=1970, num_years = 1):
     normalized = []
     for y in range(0,num_years):
-        for i in range(1,12):
+        for i in range(1,13):
             dateYDM = str(first_year+y)
             if len(str(i)) < 2:
                 dateYDM += "0"
@@ -41,7 +55,7 @@ def get_numpy_year_month_array(first_year=1970, num_years = 1):
             normalized.append(int(dateYDM))
     return np.asarray(normalized)
 
-def get_janela(v, t,anos=10):
+def get_janela(v, t, anos=10):
     if anos*12 > len(v) or anos*12 > len(t):
         raise Exception("Janela superior à amostra")
     return v[-12*anos:], t[-12*anos:]
@@ -52,107 +66,117 @@ def get_deviation(data):
 def get_variance(data):
     statistics.pvariance(data)
 
-def get_array_max_load_on_the_year(v, t):
-    max_v = []
-    max_t = []
-    max_value = 0
-    current_year = int(t[0]/10000)
-    for vi, ti in zip(v,t):
-        if current_year != int(ti/10000):
-            if max_value:
-                max_v.append(max_value)
-            max_value = 0
-            max_t.append(ti)
-            current_year = int(ti/10000)
-        if vi > max_value:
-            max_value = vi
-
-    return np.asarray(max_v), np.asarray(max_t)
-
-def get_array_min_load_on_the_year(v, t):
-    min_v = []
-    min_t = []
-    min_value = float("inf")
-    current_year = int(t[0]/10000)
-    for ti, vi in zip(t,v):
-        if current_year != int(ti/10000):
-            if min_value != float("inf"):
-                min_v.append(min_value)
-            min_value = float("inf")
-            min_t.append(ti)
-            current_year = int(ti/10000)
-        if ti < min_value:
-            min_value = vi
-    return np.asarray(min_v), np.asarray(min_t)
-
-def get_array_med_load_on_the_year(v, t):
-    med_v = []
-    med_t = []
-    med_value = float("inf")
-    current_year = int(t[0]/10000)
-    counter = 0
-    summ = 0.0
-    for ti, vi in zip(t,v):
-        if current_year != int(ti/10000):
-            med_v.append(summ/counter)
-            med_t.append(ti)
-            current_year = int(ti/10000)
-            counter = 0
-            summ = 0.0
-        counter += 1
-        summ += vi
-    return np.asarray(med_v), np.asarray(med_t)
-
-
-def linear_regression(x, y):
-    ''' Receive numpy arrays
-        get linear coefficient and constant values
-    '''
-    sum1 = 0
-    sum2 = 0
-    ym = y.mean()
-    xm = x.mean()
-
-    for xi, yi in zip(x, y):
-        sum1 += (xi-xm)*(yi-ym)
-        sum2 += (xi-xm) ** 2
-    beta = sum1/sum2
-    alpha = ym - (beta*xm)
-
-    return alpha,beta
-
 def get_projection(alpha,beta,time):
     projections = np.array([])
     for tx in time:
         proj = alpha + (tx*beta)
         projections = np.append(projections, proj)
-    if time[0] == 0:
-        pdb.set_trace()
     return time, projections
 
-guesses = {}
+def neutral_value(alpha, beta, time):
+    return alpha+beta*time
 
-#Todo iterar sobre janelas
-date_projection = get_numpy_year_month_array(2019,2)
+def neutral_func(x, alpha, beta):
+    return alpha+beta*x
 
-v, t = get_janela(v, t, JANELAS[0])
-# alpha,beta = linear_regression(t,v)
-# Get median values per month on the years and calculate coefficients
-vmed,tmed = get_array_med_load_on_the_year(v,t)
-amed, bmed = linear_regression(tmed,vmed)
-# Get minimum values per month on the years and calculate coefficients
-vmin,tmin = get_array_min_load_on_the_year(v,t)
-amin, bmin = linear_regression(tmin,vmin)
-# Get maximum values per month on the years and calculate coefficients
-vmax,tmax = get_array_max_load_on_the_year(v,t)
-amax, bmax = linear_regression(tmax,vmax)
+def pessimistic_value(alpha, beta, time):
+    return alpha*np.exp(beta*time)
 
-# Run linear projections
-#guesses['medio'] = get_projection(alpha, beta, date_projection)
-guesses['medio'] = get_projection(amed, bmed, date_projection)
-guesses['max'] = get_projection(amax, bmax, date_projection)
-guesses['min'] = get_projection(amin, bmin, date_projection)
+def pessimistic_func(x, alpha, beta):
+    return alpha*np.exp(beta*x)
 
-length = len(guesses['medio'][0])
-wt.writetsvdic(guesses, length)
-ep.buildgraphic(guesses)
+def otimistic_value(alpha, beta, time):
+    return alpha*np.log(beta*time)
+
+def otimistic_func(x, alpha, beta):
+    return alpha*np.log(beta*x)
+
+def get_projection(a, b, func, time):
+    projection = []
+    for t in time:
+        projection.append(func(t,a,b))
+    return np.asarray(projection)
+
+#### INIT ####
+for janela in JANELAS:
+    # v = tudo['values'] # Electric Load Value
+    # t = tudo['dates']  # Time YYYYMMDD
+    v, t = get_janela(tudo['values'], tudo['dates'], janela)
+
+    ts = np.arange(0, len(t))
+    ts += 1
+
+    ### Iniciando os calculos ###
+
+    # Encontrando constantes das funções de projeção
+    ap, bp = scipy.optimize.curve_fit(pessimistic_func,ts,v,p0=(10000,0))[0]
+    ao, bo = scipy.optimize.curve_fit(otimistic_func,ts,v)[0]
+    an, bn = scipy.optimize.curve_fit(neutral_func,ts,v)[0]
+
+    # Projetando os valores sobre as equações encontradas
+    pes = get_projection(ap, bp, pessimistic_func, ts)
+    oti = get_projection(ao, bo, otimistic_func, ts)
+    neu = get_projection(an, bn, neutral_func, ts)
+
+    # Calculando Erro percentual médio de cada solução
+    mape_otimista = mape(v, oti)
+    mape_pessimista = mape(v, pes)
+    mape_neutro = mape(v, neu)
+
+
+    plt.clf()
+    plt.plot(ts, v, 'o', label="Amostras")
+    plt.plot(ts, oti, '-', label="Otimista")
+    plt.plot(ts, pes, '-', label="Pessimista")
+    plt.plot(ts, pes, '-', label="Neutro")
+    plt.legend()
+    plt.xlabel("Tempo (em meses) de "+readable_date(t[0])+" a "+readable_date(t[-1]))
+    plt.ylabel("Carga")
+    plt.savefig("output/geral"+str(janela)+".png")
+
+    results = {'Data':[readable_date(tr) for tr in t],
+               'N.Mes':ts,
+               'Leitura':v,
+               'Neutro':neu,
+               'Pessimista':pes,
+               'Otimista':oti}
+
+    wt.writetsvdic(results, len(ts), "output/proj"+str(janela)+".tsv")
+    report = open("output/report"+str(janela)+".txt", 'wt')
+    report.write("Análise até 2018\n")
+    report.write("Abordagem Neutra\tMAPE:"+str(mape_neutro)+"\tY(t)="+str(an)+"+ t*"+str(bn)+"\n")
+    report.write("Abordagem Pessimista\tMAPE:"+str(mape_pessimista)+"\tY(t)="+str(ap)+"*e^("+str(bp)+"*t)\n")
+    report.write("Abordagem Otimista\tMAPE:"+str(mape_otimista)+"\tY(t)="+str(ao)+"*ln("+str(bo)+"*t)\n")
+    #report.close()
+
+
+    # Aux data for "future" projections on 2019 and 2020
+    date_projection = get_numpy_year_month_array(2019,2)
+    ts2 = np.asarray([i for i in range(ts[-1],ts[-1]+len(date_projection))])
+    # Projetando os valores sobre as equações encontradas
+    pes = get_projection(ap, bp, pessimistic_func, ts2)
+    oti = get_projection(ao, bo, otimistic_func, ts2)
+    neu = get_projection(an, bn, neutral_func, ts2)
+    v, t = tudo2['values'], tudo2['dates']
+
+    tsplot = ts2 - ts2[0]
+    plt.clf()
+    plt.plot(tsplot[:-(len(ts2)-len(t))], v, 'o', label="Amostras")
+    plt.plot(tsplot, oti, '-', label="Otimista")
+    plt.plot(tsplot, pes, '-', label="Pessimista")
+    plt.plot(tsplot, pes, '-', label="Neutro")
+    plt.legend()
+    plt.xlabel("Tempo (em meses) de "+readable_date(t[0])+" a "+readable_date(t[-1]))
+    plt.ylabel("Carga")
+    plt.savefig("output/geral1920"+str(janela)+".png")
+
+    report.write("\n\nAnálise 2019 - 2020\n")
+    mape_otimista =   mape(v, oti[:len(v)])
+    mape_pessimista = mape(v, pes[:len(v)])
+    mape_neutro =     mape(v, neu[:len(v)])
+    report.write("Abordagem Neutra\tMAPE:"+str(mape_neutro)+"\tY(t)="+str(an)+"+ t*"+str(bn)+"\n")
+    report.write("Abordagem Pessimista\tMAPE:"+str(mape_pessimista)+"\tY(t)="+str(ap)+"*e^("+str(bp)+"*t)\n")
+    report.write("Abordagem Otimista\tMAPE:"+str(mape_otimista)+"\tY(t)="+str(ao)+"*ln("+str(bo)+"*t)\n")
+    report.close()
+
+    # Projetar melhor solução até dezembro de 2023
